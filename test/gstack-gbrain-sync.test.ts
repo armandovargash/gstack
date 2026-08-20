@@ -71,6 +71,14 @@ describe("gstack-gbrain-sync CLI", () => {
     expect(source).toContain('spawnGbrain(["edges-backfill", "--source", sourceId, "--json"]');
   });
 
+  it("threads the selected portable root into legacy child writers", () => {
+    const source = readFileSync(SCRIPT, "utf-8");
+
+    expect(source).toContain("childEnv.GSTACK_HOME = GSTACK_HOME");
+    expect(source).toContain("const childEnv = { ...process.env, GSTACK_HOME }");
+    expect(source).toContain("env: childEnv");
+  });
+
   it("--dry-run with --code-only reports the code import preview only", () => {
     const home = makeTestHome();
     const gstackHome = join(home, ".gstack");

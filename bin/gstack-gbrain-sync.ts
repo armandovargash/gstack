@@ -1290,6 +1290,10 @@ function runMemoryIngest(args: CliArgs): StageResult {
   // reboot, user manual cleanup), warn and fall through to a fresh restage.
   const resume = decideResume();
   const childEnv = buildGbrainEnv({ announce: false });
+  // Legacy child writers still consume GSTACK_HOME. Pin it to the portable
+  // root selected by this orchestrator so staging, checkpoint validation, and
+  // transcript state cannot split across plugin-data and ~/.gstack.
+  childEnv.GSTACK_HOME = GSTACK_HOME;
   if (resume.kind === "resume") {
     console.error(
       `[sync:memory] resuming from gbrain checkpoint (${resume.processedIndex}/${resume.totalFiles} files staged at ${resume.stagingDir})`,
@@ -1374,8 +1378,9 @@ function runBrainSyncPush(args: CliArgs): StageResult {
   // an internal or external command"), so this stage failed on EVERY Windows run
   // while looking like a single red line in an otherwise green report. See
   // bashScriptInvocation.
-  const discover = bashScriptInvocation(brainSyncPath, ["--discover-new"]);
-  const once = bashScriptInvocation(brainSyncPath, ["--once"]);
+  const childEnv = { ...process.env, GSTACK_HOME };
+  const discover = bashScriptInvocation(brainSyncPath, ["--discover-new"], { env: childEnv });
+  const once = bashScriptInvocation(brainSyncPath, ["--once"], { env: childEnv });
   if (!discover || !once) {
     return {
       name: "brain-sync",
@@ -1390,8 +1395,18 @@ function runBrainSyncPush(args: CliArgs): StageResult {
     ? ["ignore", "ignore", "ignore"]
     : ["ignore", "inherit", "inherit"];
 
-  spawnSync(discover.cmd, discover.argv, { stdio, timeout: 60 * 1000, shell: discover.shell });
-  const result = spawnSync(once.cmd, once.argv, { stdio, timeout: 60 * 1000, shell: once.shell });
+  spawnSync(discover.cmd, discover.argv, {
+    stdio,
+    timeout: 60 * 1000,
+    shell: discover.shell,
+    env: childEnv,
+  });
+  const result = spawnSync(once.cmd, once.argv, {
+    stdio,
+    timeout: 60 * 1000,
+    shell: once.shell,
+    env: childEnv,
+  });
 
   return {
     name: "brain-sync",
