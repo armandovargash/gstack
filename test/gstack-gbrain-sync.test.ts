@@ -242,6 +242,54 @@ esac
     rmSync(home, { recursive: true, force: true });
   });
 
+  it("rejects an old GBrain before explicit backfill can start", () => {
+    const home = makeTestHome();
+    const gstackHome = join(home, ".gstack");
+    const bindir = mkdtempSync(join(tmpdir(), "gstack-old-gbrain-bin-"));
+    const repo = mkdtempSync(join(tmpdir(), "gstack-old-gbrain-repo-"));
+    const commandLog = join(home, "gbrain-commands.log");
+    mkdirSync(gstackHome, { recursive: true });
+    spawnSync("git", ["init", "--quiet", "-b", "main"], { cwd: repo });
+    spawnSync("git", ["remote", "add", "origin", "https://github.com/acme/old-gbrain.git"], { cwd: repo });
+    writeFileSync(join(bindir, "gbrain"), `#!/bin/sh
+printf '%s\n' "$*" >> "$GSTACK_TEST_GBRAIN_LOG"
+case "$*" in
+  --version) echo 'gbrain 0.42.13.9'; exit 0 ;;
+  *) exit 99 ;;
+esac
+`);
+    chmodSync(join(bindir, "gbrain"), 0o755);
+
+    const r = spawnSync("bun", [
+      SCRIPT,
+      "--dream",
+      "--no-code",
+      "--no-memory",
+      "--no-brain-sync",
+    ], {
+      encoding: "utf-8",
+      timeout: 60000,
+      cwd: repo,
+      env: {
+        ...process.env,
+        HOME: home,
+        GSTACK_HOME: gstackHome,
+        GSTACK_TEST_GBRAIN_LOG: commandLog,
+        PATH: `${bindir}:${process.env.PATH || ""}`,
+      },
+    });
+
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("requires gbrain >= 0.42.14");
+    expect(r.stderr).toContain("Run /setup-gbrain to upgrade before syncing");
+    const commands = readFileSync(commandLog, "utf-8").trim().split("\n");
+    expect(commands.length).toBeGreaterThan(0);
+    expect(commands.every((command) => command === "--version")).toBe(true);
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(bindir, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  });
+
   it("falls back to a derived source when .gbrain-source cannot be read", () => {
     const home = makeTestHome();
     const gstackHome = join(home, ".gstack");

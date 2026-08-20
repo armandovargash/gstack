@@ -28,6 +28,8 @@ import {
   parseEdgeBackfillSummary,
   parseCallGraphReadiness,
   nextCallGraphPass,
+  isGbrainCallGraphVersionSupported,
+  MIN_GBRAIN_CALL_GRAPH_VERSION,
   formatStage,
   type CliArgs,
   type EdgeBackfillSummary,
@@ -82,6 +84,24 @@ describe("shouldRunDream — gate matrix", () => {
   it("plain incremental never runs (no flag, no full)", () => {
     expect(shouldRunDream(args(), "never")).toBe(false);
     expect(shouldRunDream(args(), null)).toBe(false);
+  });
+});
+
+describe("GBrain call-graph version floor", () => {
+  it("accepts the readiness release and newer 3/4-part stable versions", () => {
+    expect(MIN_GBRAIN_CALL_GRAPH_VERSION).toBe("0.42.14");
+    expect(isGbrainCallGraphVersionSupported("gbrain 0.42.14.0")).toBe(true);
+    expect(isGbrainCallGraphVersionSupported("v0.42.14")).toBe(true);
+    expect(isGbrainCallGraphVersionSupported("gbrain0.46.24.0")).toBe(true);
+    expect(isGbrainCallGraphVersionSupported("1.0.0")).toBe(true);
+  });
+
+  it("rejects older, prerelease, malformed, and missing versions", () => {
+    expect(isGbrainCallGraphVersionSupported("gbrain 0.42.13.9")).toBe(false);
+    expect(isGbrainCallGraphVersionSupported("0.41.99")).toBe(false);
+    expect(isGbrainCallGraphVersionSupported("0.42.14-alpha")).toBe(false);
+    expect(isGbrainCallGraphVersionSupported("unknown")).toBe(false);
+    expect(isGbrainCallGraphVersionSupported("")).toBe(false);
   });
 });
 

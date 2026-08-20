@@ -82,7 +82,8 @@ modifications to brain or cache.
 Before doing anything, check that /setup-gbrain has been run on this Mac.
 
 ```bash
-~/.claude/skills/gstack/bin/gstack-gbrain-detect 2>/dev/null
+GBRAIN_DETECT_JSON=$(~/.claude/skills/gstack/bin/gstack-gbrain-detect 2>/dev/null)
+printf '%s\n' "$GBRAIN_DETECT_JSON"
 ```
 
 **Brain trust policy gate (v1.48 / Phase 1.5 / D4 — added by T13+T5c):**
@@ -185,6 +186,42 @@ This pre-flight short-circuits the orchestrator before it spends ~80ms
 probing the engine again. The orchestrator independently runs the same
 classifier for defense-in-depth, but Step 1.5's STOP is where the user
 gets the actionable remediation message.
+
+For local engine states `ok` or `timeout`, enforce the call-graph API floor
+before Step 2 can start a full code walk:
+
+```bash
+_GBRAIN_MIN_VERSION=0.42.14
+_GBRAIN_VERSION=$(printf '%s' "$GBRAIN_DETECT_JSON" \
+  | jq -r '.gbrain_version // ""' 2>/dev/null \
+  | sed -E 's/^gbrain[[:space:]]*v?//; s/^v//')
+_GBRAIN_VERSION_OK=false
+if printf '%s\n' "$_GBRAIN_VERSION" \
+    | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
+  if awk -v have="$_GBRAIN_VERSION" -v need="$_GBRAIN_MIN_VERSION" '
+    BEGIN {
+      split(have, h, "."); split(need, n, ".");
+      for (i = 1; i <= 4; i++) {
+        hv = (h[i] == "" ? 0 : h[i] + 0);
+        nv = (n[i] == "" ? 0 : n[i] + 0);
+        if (hv > nv) exit 0;
+        if (hv < nv) exit 1;
+      }
+      exit 0;
+    }'; then
+    _GBRAIN_VERSION_OK=true
+  fi
+fi
+echo "GBRAIN_VERSION=$_GBRAIN_VERSION MINIMUM=$_GBRAIN_MIN_VERSION OK=$_GBRAIN_VERSION_OK"
+```
+
+If `_GBRAIN_VERSION_OK` is not `true`, STOP before invoking the orchestrator:
+
+> "This GBrain version is too old for source-scoped call-graph readiness.
+> Run `/setup-gbrain` to upgrade to v0.42.14 or newer, then retry `/sync-gbrain`."
+
+Thin clients skip this local CLI version gate because their code indexing runs
+on the remote brain server and the local call-graph stage is skipped by design.
 
 ---
 

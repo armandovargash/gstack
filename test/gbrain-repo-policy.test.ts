@@ -363,6 +363,13 @@ describe('gstack-gbrain-sync code stage honors the repo policy (#2140 sync path)
 
     try {
       expect(run(['set', REPO_URL, 'deny']).status).toBe(0);
+      const deniedPreview = runSync([
+        '--dry-run', '--dream', '--no-code', '--no-memory', '--no-brain-sync', '--quiet',
+      ], env);
+      expect(deniedPreview.text).toContain('no GBrain interaction is allowed');
+      expect(deniedPreview.text).not.toContain('would: gbrain edges-backfill');
+      expect(fs.existsSync(commandLog)).toBe(false);
+
       const denied = runSync(dreamArgs, env);
       expect(denied.status).toBe(1);
       expect(denied.stages.find((s: any) => s.name === 'dream')?.summary)
@@ -370,6 +377,13 @@ describe('gstack-gbrain-sync code stage honors the repo policy (#2140 sync path)
       expect(fs.existsSync(commandLog)).toBe(false);
 
       expect(run(['set', REPO_URL, 'read-only']).status).toBe(0);
+      const readOnlyPreview = runSync([
+        '--dry-run', '--dream', '--no-code', '--no-memory', '--no-brain-sync', '--quiet',
+      ], env);
+      expect(readOnlyPreview.text).toContain('call-graph backfill writes metadata');
+      expect(readOnlyPreview.text).not.toContain('would: gbrain edges-backfill');
+      expect(fs.existsSync(commandLog)).toBe(false);
+
       const readOnly = runSync(dreamArgs, env);
       expect(readOnly.status).toBe(0);
       expect(readOnly.stages.find((s: any) => s.name === 'dream')?.summary)

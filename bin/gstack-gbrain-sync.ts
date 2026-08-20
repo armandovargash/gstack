@@ -40,7 +40,7 @@ import { detectEngineTier, withErrorContext, canonicalizeRemote } from "../lib/g
 import { ensureSourceRegistered, sourcePageCount, parseSourcesList, type CycleStatus } from "../lib/gbrain-sources";
 import { detectAutopilot, decideSourceRemove, decideCodeSync } from "../lib/gbrain-guards";
 import { writeReceipt } from "../lib/egress-receipt";
-import { localEngineStatus, type LocalEngineStatus } from "../lib/gbrain-local-status";
+import { localEngineStatus, readGbrainVersion, type LocalEngineStatus } from "../lib/gbrain-local-status";
 import { buildGbrainEnv, spawnGbrain, execGbrainJson, NEEDS_SHELL_ON_WINDOWS, bashScriptInvocation } from "../lib/gbrain-exec";
 import { repoPolicyTier as sharedRepoPolicyTier } from "../lib/gbrain-repo-policy-client";
 import { checkOwnedStagingDir } from "../lib/staging-guard";
@@ -109,6 +109,7 @@ const STALE_LOCK_MS = 5 * 60 * 1000;
 const DEFAULT_DREAM_TIMEOUT_MS = 45 * 60 * 1000;
 const DREAM_MARKER_STALE_MS = DEFAULT_DREAM_TIMEOUT_MS;
 const CALL_GRAPH_READINESS_PROBE = "__gstack_call_graph_readiness_5f3c9d__";
+export const MIN_GBRAIN_CALL_GRAPH_VERSION = "0.42.14";
 
 export interface EdgeBackfillSummary {
   source_id: string;
@@ -129,6 +130,21 @@ export interface CallGraphReadiness {
 }
 
 export type CallGraphPassAction = "ready" | "continue" | "stalled" | "not_built" | "unknown" | "invalid";
+
+/** Accept gbrain's 3- or 4-part stable release format, with its CLI prefix. */
+export function isGbrainCallGraphVersionSupported(raw: string): boolean {
+  const match = raw.trim().match(/^(?:gbrain\s*)?v?(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?$/i);
+  if (!match) return false;
+  const have = match.slice(1, 5).map((part) => Number.parseInt(part ?? "0", 10));
+  const need = MIN_GBRAIN_CALL_GRAPH_VERSION.split(".").map((part) => Number.parseInt(part, 10));
+  for (let i = 0; i < 4; i += 1) {
+    const havePart = have[i] ?? 0;
+    const needPart = need[i] ?? 0;
+    if (havePart > needPart) return true;
+    if (havePart < needPart) return false;
+  }
+  return true;
+}
 
 /**
  * Marker path computed fresh per call (not a module const) so tests can mutate
@@ -1463,22 +1479,10 @@ export async function runDream(args: CliArgs): Promise<StageResult> {
   const root = repoRoot();
   const previewSourceId = root ? readPinnedSourceId(root) ?? deriveCodeSourceId(root) : null;
 
-  if (args.mode === "dry-run") {
-    return {
-      name: "dream",
-      ran: false,
-      ok: true,
-      duration_ms: 0,
-      summary: previewSourceId
-        ? `would: gbrain edges-backfill --source ${previewSourceId} --json, then verify source readiness`
-        : "would: refuse call-graph backfill because no repository source can be identified",
-    };
-  }
-
   // Edge backfill mutates call-graph metadata, so it is subject to the same
-  // repository policy as code ingest. Enforce this inside the stage as well as
-  // at orchestration time so explicit --dream and unattended --full runs can
-  // never bypass a deny/read-only decision or an unreadable policy store.
+  // repository policy as code ingest. This check intentionally precedes the
+  // dry-run branch: previews must report the same refusal/skip as real runs,
+  // while still avoiding every GBrain command.
   const policyUrl = originUrl();
   const tier = repoPolicyTier(policyUrl);
   if (tier === "read-only") {
@@ -1502,12 +1506,39 @@ export async function runDream(args: CliArgs): Promise<StageResult> {
     };
   }
 
+  if (args.mode === "dry-run") {
+    return {
+      name: "dream",
+      ran: false,
+      ok: true,
+      duration_ms: 0,
+      summary: previewSourceId
+        ? `would: gbrain edges-backfill --source ${previewSourceId} --json, then verify source readiness`
+        : "would: refuse call-graph backfill because no repository source can be identified",
+    };
+  }
+
   const gbrainEnv = buildGbrainEnv({ announce: !args.quiet });
   const localStatus = localEngineStatus({ noCache: false });
   if (localStatus === "timeout") {
     warnProbeTimeout("dream");
   } else if (localStatus !== "ok") {
     return skipStageForLocalStatus("dream", localStatus, t0);
+  }
+
+  // Existing installations may predate the current installer floor. Refuse
+  // before any backfill/reindex work instead of failing after a long --full run.
+  const gbrainVersion = readGbrainVersion(process.env);
+  if (!isGbrainCallGraphVersionSupported(gbrainVersion)) {
+    return {
+      name: "dream",
+      ran: true,
+      ok: false,
+      duration_ms: Date.now() - t0,
+      summary: gbrainVersion
+        ? `gbrain ${gbrainVersion} is below the required ${MIN_GBRAIN_CALL_GRAPH_VERSION}; run /setup-gbrain to upgrade before syncing`
+        : `could not verify gbrain >= ${MIN_GBRAIN_CALL_GRAPH_VERSION}; run /setup-gbrain before syncing`,
+    };
   }
 
   if (!root) {
@@ -1798,6 +1829,27 @@ export function formatStage(s: StageResult): string {
 
 async function main(): Promise<void> {
   const args = parseArgs();
+
+  // --full performs its expensive code walk before runDream. Existing users
+  // may still have a GBrain release accepted by an older gstack installer, so
+  // enforce the new floor here as well as inside runDream. Check repo policy
+  // first: deny/read-only previews and invocations must not probe GBrain.
+  if (args.mode !== "dry-run" && shouldRunDream(args, null)) {
+    const tier = repoPolicyTier(originUrl());
+    if (tier === "read-write" || tier === "unset") {
+      const gbrainVersion = readGbrainVersion(process.env);
+      if (!isGbrainCallGraphVersionSupported(gbrainVersion)) {
+        const detail = gbrainVersion
+          ? `found ${gbrainVersion}`
+          : "version could not be determined";
+        console.error(
+          `[gbrain-sync] call-graph backfill requires gbrain >= ${MIN_GBRAIN_CALL_GRAPH_VERSION} (${detail}). ` +
+          "Run /setup-gbrain to upgrade before syncing.",
+        );
+        process.exit(1);
+      }
+    }
+  }
 
   if (!args.quiet) {
     const engine = detectEngineTier();
