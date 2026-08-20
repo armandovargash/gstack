@@ -1564,6 +1564,7 @@ export async function runDream(args: CliArgs): Promise<StageResult> {
     };
   }
   const sourceId = resolveCodeSourceId(root, gbrainEnv);
+  const sourceDetail = { source_id: sourceId, source_path: root };
 
   if (!acquireDreamMarker(sourceId)) {
     const pid = dreamMarkerPid(sourceId);
@@ -1573,6 +1574,7 @@ export async function runDream(args: CliArgs): Promise<StageResult> {
       ok: true,
       duration_ms: Date.now() - t0,
       summary: `call-graph backfill already running${pid !== null ? ` (pid ${pid})` : ""} — skipped`,
+      detail: sourceDetail,
     };
   }
 
@@ -1610,6 +1612,7 @@ export async function runDream(args: CliArgs): Promise<StageResult> {
           ok: false,
           duration_ms: Date.now() - t0,
           summary: `gbrain edges-backfill failed to start: ${(err as Error).message}`,
+          detail: sourceDetail,
         };
       }
 
@@ -1626,6 +1629,7 @@ export async function runDream(args: CliArgs): Promise<StageResult> {
           ok: false,
           duration_ms: Date.now() - t0,
           summary: `gbrain edges-backfill failed: ${why}`,
+          detail: sourceDetail,
         };
       }
       if (/\[edges-backfill\][^\n]*failed:/i.test(backfillResult.stderr || "")) {
@@ -1635,6 +1639,7 @@ export async function runDream(args: CliArgs): Promise<StageResult> {
           ok: false,
           duration_ms: Date.now() - t0,
           summary: "gbrain edges-backfill reported a source failure",
+          detail: sourceDetail,
         };
       }
       if (!args.quiet && backfillResult.stderr?.trim()) {
@@ -1653,6 +1658,7 @@ export async function runDream(args: CliArgs): Promise<StageResult> {
           ok: false,
           duration_ms: Date.now() - t0,
           summary: `gbrain edges-backfill returned no exact row for source ${sourceId}`,
+          detail: sourceDetail,
         };
       }
       chunksWalked += backfill.chunks_walked;
@@ -1684,6 +1690,7 @@ export async function runDream(args: CliArgs): Promise<StageResult> {
           ok: false,
           duration_ms: Date.now() - t0,
           summary: `gbrain source readiness probe failed to start: ${(err as Error).message}`,
+          detail: sourceDetail,
         };
       }
       if (readinessResult.error || readinessResult.status !== 0) {
@@ -1697,6 +1704,7 @@ export async function runDream(args: CliArgs): Promise<StageResult> {
           ok: false,
           duration_ms: Date.now() - t0,
           summary: `gbrain source readiness probe failed: ${why}`,
+          detail: sourceDetail,
         };
       }
 
@@ -1708,6 +1716,7 @@ export async function runDream(args: CliArgs): Promise<StageResult> {
           ok: false,
           duration_ms: Date.now() - t0,
           summary: `gbrain readiness returned invalid or wrong-source evidence for ${sourceId}`,
+          detail: sourceDetail,
         };
       }
 
@@ -1721,6 +1730,7 @@ export async function runDream(args: CliArgs): Promise<StageResult> {
             summary: `call graph ready for ${sourceId} ` +
               `(${chunksWalked} chunks in ${passes} pass${passes === 1 ? "" : "es"}; ` +
               `${edgesResolved} resolved, ${edgesAmbiguous} ambiguous, ${edgesUnmatched} unmatched)`,
+            detail: { ...sourceDetail, status: readiness.status, ready: readiness.ready },
           };
         case "continue":
           continue;
@@ -1732,6 +1742,7 @@ export async function runDream(args: CliArgs): Promise<StageResult> {
             warn: true,
             duration_ms: Date.now() - t0,
             summary: `call graph for ${sourceId} still indexing, but the official backfill made no progress`,
+            detail: { ...sourceDetail, status: readiness.status, ready: readiness.ready },
           };
         case "not_built":
           return {
@@ -1741,6 +1752,7 @@ export async function runDream(args: CliArgs): Promise<StageResult> {
             warn: true,
             duration_ms: Date.now() - t0,
             summary: `call graph not built for ${sourceId} because no code is indexed in that source`,
+            detail: { ...sourceDetail, status: readiness.status, ready: readiness.ready },
           };
         case "unknown":
           return {
@@ -1750,6 +1762,7 @@ export async function runDream(args: CliArgs): Promise<StageResult> {
             warn: true,
             duration_ms: Date.now() - t0,
             summary: `call-graph readiness is unknown for ${sourceId}; no success claimed`,
+            detail: { ...sourceDetail, status: readiness.status, ready: readiness.ready },
           };
         case "invalid":
           return {
@@ -1758,6 +1771,7 @@ export async function runDream(args: CliArgs): Promise<StageResult> {
             ok: false,
             duration_ms: Date.now() - t0,
             summary: `gbrain returned contradictory readiness for ${sourceId}`,
+            detail: { ...sourceDetail, status: readiness.status, ready: readiness.ready },
           };
       }
     }
@@ -1768,6 +1782,7 @@ export async function runDream(args: CliArgs): Promise<StageResult> {
       ok: false,
       duration_ms: Date.now() - t0,
       summary: `call-graph backfill timed out after ${passes} pass${passes === 1 ? "" : "es"}; progress is resumable`,
+      detail: sourceDetail,
     };
   } finally {
     releaseDreamMarker(sourceId);

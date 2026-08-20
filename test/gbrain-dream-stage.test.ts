@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect, afterEach } from "bun:test";
-import { mkdtempSync, mkdirSync, existsSync, writeFileSync, utimesSync, rmSync } from "fs";
+import { mkdtempSync, mkdirSync, existsSync, readFileSync, writeFileSync, utimesSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { spawnSync } from "child_process";
@@ -201,6 +201,19 @@ describe("CLI gate wiring (dry-run subprocess — never spawns a real dream)", (
 
   it("plain --dry-run (incremental) omits the dream row", () => {
     expect(run([])).not.toContain("would: gbrain edges-backfill");
+  });
+});
+
+describe("skill readiness source custody", () => {
+  it("uses the persisted path-validated dream/code source, never a raw cwd pin", () => {
+    const template = readFileSync(join(import.meta.dir, "..", "sync-gbrain", "SKILL.md.tmpl"), "utf-8");
+    const healthCheck = template.slice(
+      template.indexOf("## Step 3.5: Call-graph health check"),
+      template.indexOf("## Step 4: Refresh"),
+    );
+    expect(healthCheck).toContain('select(.name=="dream")');
+    expect(healthCheck).toContain('select(.name=="code")');
+    expect(healthCheck).not.toContain("cat .gbrain-source");
   });
 });
 
