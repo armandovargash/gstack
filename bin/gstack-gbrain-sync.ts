@@ -101,12 +101,14 @@ interface StageResult {
 // ── Constants ──────────────────────────────────────────────────────────────
 
 const HOME = homedir();
-// Skills resolve the portable root through bin/gstack-paths and pass its
-// GSTACK_STATE_ROOT output to this writer. Keep GSTACK_HOME as the legacy
-// fallback for direct callers and existing tests.
-const GSTACK_HOME = process.env.GSTACK_STATE_ROOT || process.env.GSTACK_HOME || join(HOME, ".gstack");
-const STATE_PATH = join(GSTACK_HOME, ".gbrain-sync-state.json");
-const LOCK_PATH = join(GSTACK_HOME, ".sync-gbrain.lock");
+// The orchestrator's own metadata is portable. Curated artifacts, repository
+// policies, transcript watermarks, and ingest staging remain in the canonical
+// GSTACK_HOME consumed by their existing writers; do not silently relocate
+// those data stores when a plugin supplies GSTACK_STATE_ROOT.
+const LEGACY_GSTACK_HOME = process.env.GSTACK_HOME || join(HOME, ".gstack");
+const GSTACK_STATE_ROOT = process.env.GSTACK_STATE_ROOT || LEGACY_GSTACK_HOME;
+const STATE_PATH = join(GSTACK_STATE_ROOT, ".gbrain-sync-state.json");
+const LOCK_PATH = join(GSTACK_STATE_ROOT, ".sync-gbrain.lock");
 const STALE_LOCK_MS = 5 * 60 * 1000;
 
 // The legacy --dream flag runs GBrain's official source-scoped, resumable
@@ -259,7 +261,7 @@ export type ResumeVerdict =
  *   - checkpoint + staging ok    → resume (gbrain picks up at processedIndex+1)
  *   - checkpoint + staging gone  → warn, fall through to fresh restage
  */
-export function decideResume(gstackHome: string = GSTACK_HOME): ResumeVerdict {
+export function decideResume(gstackHome: string = LEGACY_GSTACK_HOME): ResumeVerdict {
   const cp = readGbrainCheckpoint();
   if (!cp || !cp.dir) return { kind: "no-checkpoint" };
   const stagingDir = cp.dir;
@@ -709,7 +711,7 @@ interface LockInfo {
 }
 
 function acquireLock(): boolean {
-  mkdirSync(GSTACK_HOME, { recursive: true });
+  mkdirSync(GSTACK_STATE_ROOT, { recursive: true });
   if (existsSync(LOCK_PATH)) {
     // Check if stale.
     try {
@@ -1290,10 +1292,6 @@ function runMemoryIngest(args: CliArgs): StageResult {
   // reboot, user manual cleanup), warn and fall through to a fresh restage.
   const resume = decideResume();
   const childEnv = buildGbrainEnv({ announce: false });
-  // Legacy child writers still consume GSTACK_HOME. Pin it to the portable
-  // root selected by this orchestrator so staging, checkpoint validation, and
-  // transcript state cannot split across plugin-data and ~/.gstack.
-  childEnv.GSTACK_HOME = GSTACK_HOME;
   if (resume.kind === "resume") {
     console.error(
       `[sync:memory] resuming from gbrain checkpoint (${resume.processedIndex}/${resume.totalFiles} files staged at ${resume.stagingDir})`,
@@ -1378,9 +1376,8 @@ function runBrainSyncPush(args: CliArgs): StageResult {
   // an internal or external command"), so this stage failed on EVERY Windows run
   // while looking like a single red line in an otherwise green report. See
   // bashScriptInvocation.
-  const childEnv = { ...process.env, GSTACK_HOME };
-  const discover = bashScriptInvocation(brainSyncPath, ["--discover-new"], { env: childEnv });
-  const once = bashScriptInvocation(brainSyncPath, ["--once"], { env: childEnv });
+  const discover = bashScriptInvocation(brainSyncPath, ["--discover-new"]);
+  const once = bashScriptInvocation(brainSyncPath, ["--once"]);
   if (!discover || !once) {
     return {
       name: "brain-sync",
@@ -1395,18 +1392,8 @@ function runBrainSyncPush(args: CliArgs): StageResult {
     ? ["ignore", "ignore", "ignore"]
     : ["ignore", "inherit", "inherit"];
 
-  spawnSync(discover.cmd, discover.argv, {
-    stdio,
-    timeout: 60 * 1000,
-    shell: discover.shell,
-    env: childEnv,
-  });
-  const result = spawnSync(once.cmd, once.argv, {
-    stdio,
-    timeout: 60 * 1000,
-    shell: once.shell,
-    env: childEnv,
-  });
+  spawnSync(discover.cmd, discover.argv, { stdio, timeout: 60 * 1000, shell: discover.shell });
+  const result = spawnSync(once.cmd, once.argv, { stdio, timeout: 60 * 1000, shell: once.shell });
 
   return {
     name: "brain-sync",
