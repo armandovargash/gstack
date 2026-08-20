@@ -205,6 +205,18 @@ describe("CLI gate wiring (dry-run subprocess — never spawns a real dream)", (
 });
 
 describe("skill readiness source custody", () => {
+  it("resolves code-index state through the portable root for this repository", () => {
+    const template = readFileSync(join(import.meta.dir, "..", "sync-gbrain", "SKILL.md.tmpl"), "utf-8");
+    const healthCheck = template.slice(
+      template.indexOf("## Step 3: Code-index health check"),
+      template.indexOf("## Step 3.5: Call-graph health check"),
+    );
+    expect(healthCheck).toContain('eval "$(~/.claude/skills/gstack/bin/gstack-paths)"');
+    expect(healthCheck).toContain('.name=="code" and .detail.source_path==$path');
+    expect(healthCheck).toContain('"$GSTACK_STATE_ROOT/.gbrain-sync-state.json"');
+    expect(healthCheck).not.toContain("~/.gstack/.gbrain-sync-state.json");
+  });
+
   it("uses the persisted path-validated dream/code source, never a raw cwd pin", () => {
     const template = readFileSync(join(import.meta.dir, "..", "sync-gbrain", "SKILL.md.tmpl"), "utf-8");
     const healthCheck = template.slice(
@@ -214,7 +226,9 @@ describe("skill readiness source custody", () => {
     expect(healthCheck).toContain('.name=="dream" and .detail.source_path==$path');
     expect(healthCheck).toContain('.name=="code" and .detail.source_path==$path');
     expect(healthCheck).toContain('.detail.source_path==$path');
-    expect(healthCheck).toContain('${GSTACK_HOME:-$HOME/.gstack}');
+    expect(healthCheck).toContain('eval "$(~/.claude/skills/gstack/bin/gstack-paths)"');
+    expect(healthCheck).toContain('"$GSTACK_STATE_ROOT/.gbrain-sync-state.json"');
+    expect(healthCheck).not.toContain('${GSTACK_HOME:-$HOME/.gstack}');
     expect(healthCheck).not.toContain("cat .gbrain-source");
   });
 });

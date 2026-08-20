@@ -236,9 +236,9 @@ bun run ~/.claude/skills/gstack/bin/gstack-gbrain-sync.ts <user-args>
 
 The orchestrator runs three stages: code → memory → brain-sync (per the
 plan's storage tiering). Each stage failure is non-fatal; subsequent stages
-still run. State is persisted to `~/.gstack/.gbrain-sync-state.json` via
-tmp-file + atomic rename. Concurrent runs are blocked by a lock file at
-`~/.gstack/.sync-gbrain.lock` (5-min stale-takeover).
+still run. State is persisted below the portable GStack state root resolved by
+`bin/gstack-paths`, via tmp-file + atomic rename. Concurrent runs are blocked
+by a lock file in the same root (5-min stale-takeover).
 
 ---
 
@@ -247,8 +247,13 @@ tmp-file + atomic rename. Concurrent runs are blocked by a lock file at
 After the sync run, query gbrain for the cwd source's page_count:
 
 ```bash
-SOURCE_ID=$(grep -o '"source_id":"[^"]*"' ~/.gstack/.gbrain-sync-state.json 2>/dev/null \
-  | head -1 | sed 's/.*"source_id":"//;s/".*//')
+eval "$(~/.claude/skills/gstack/bin/gstack-paths)"
+_REPO_TOP=$(git rev-parse --show-toplevel 2>/dev/null || true)
+SOURCE_ID=$(jq -r --arg path "$_REPO_TOP" '
+  [.last_stages[]? | select(.name=="code" and .detail.source_path==$path) | .detail.source_id]
+  | map(select(type=="string" and length>0))
+  | first // empty
+' "$GSTACK_STATE_ROOT/.gbrain-sync-state.json" 2>/dev/null)
 PAGES=$(gbrain sources list --json 2>/dev/null \
   | jq -r --arg id "$SOURCE_ID" '.sources[] | select(.id==$id) | .page_count' 2>/dev/null \
   || echo 0)
@@ -288,7 +293,7 @@ command must consult graph readiness instead of short-circuiting on a match:
 # update the shared state after this invocation; source_path custody makes that
 # race fail closed instead of certifying another checkout's graph. Never trust
 # a raw .gbrain-source here: it may be stale or copied from another checkout.
-_GSTACK_STATE_ROOT="${GSTACK_HOME:-$HOME/.gstack}"
+eval "$(~/.claude/skills/gstack/bin/gstack-paths)"
 _REPO_TOP=$(git rev-parse --show-toplevel 2>/dev/null || true)
 SOURCE_ID=$(jq -r --arg path "$_REPO_TOP" '
   [
@@ -297,7 +302,7 @@ SOURCE_ID=$(jq -r --arg path "$_REPO_TOP" '
   ]
   | map(select(type=="string" and length>0))
   | first // empty
-' "$_GSTACK_STATE_ROOT/.gbrain-sync-state.json" 2>/dev/null)
+' "$GSTACK_STATE_ROOT/.gbrain-sync-state.json" 2>/dev/null)
 GRAPH_JSON=$(gbrain code-callers "__gstack_call_graph_readiness_5f3c9d__" \
   --source "$SOURCE_ID" --limit 1 --json 2>/dev/null || true)
 GRAPH_STATUS=$(printf '%s' "$GRAPH_JSON" | jq -r --arg id "$SOURCE_ID" '
