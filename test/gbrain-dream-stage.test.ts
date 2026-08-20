@@ -97,6 +97,8 @@ describe("runDream — dry-run preview", () => {
 
 describe("dream marker — concurrency guard", () => {
   const saved = process.env.GSTACK_HOME;
+  const sourceA = "gstack-code-acme-a-11111111";
+  const sourceB = "gstack-code-acme-b-22222222";
   let tmp: string;
 
   afterEach(() => {
@@ -112,27 +114,34 @@ describe("dream marker — concurrency guard", () => {
 
   it("acquire creates the marker; a second acquire on a fresh marker fails", () => {
     redirectHome();
-    expect(acquireDreamMarker()).toBe(true);
-    expect(existsSync(dreamMarkerPath())).toBe(true);
+    expect(acquireDreamMarker(sourceA)).toBe(true);
+    expect(existsSync(dreamMarkerPath(sourceA))).toBe(true);
     // Fresh marker present → a concurrent worktree must NOT launch a duplicate.
-    expect(acquireDreamMarker()).toBe(false);
+    expect(acquireDreamMarker(sourceA)).toBe(false);
+  });
+
+  it("does not suppress a concurrent backfill for a different source", () => {
+    redirectHome();
+    expect(acquireDreamMarker(sourceA)).toBe(true);
+    expect(acquireDreamMarker(sourceB)).toBe(true);
+    expect(dreamMarkerPath(sourceA)).not.toBe(dreamMarkerPath(sourceB));
   });
 
   it("release removes the marker (same pid)", () => {
     redirectHome();
-    expect(acquireDreamMarker()).toBe(true);
-    releaseDreamMarker();
-    expect(existsSync(dreamMarkerPath())).toBe(false);
+    expect(acquireDreamMarker(sourceA)).toBe(true);
+    releaseDreamMarker(sourceA);
+    expect(existsSync(dreamMarkerPath(sourceA))).toBe(false);
   });
 
   it("a stale marker (older than TTL) is taken over", () => {
     redirectHome();
     // Plant a marker with an mtime ~46 min in the past (TTL is 45 min).
-    const path = dreamMarkerPath();
+    const path = dreamMarkerPath(sourceA);
     writeFileSync(path, JSON.stringify({ pid: 999999, started_at: "old" }));
     const old = new Date(Date.now() - 46 * 60 * 1000);
     utimesSync(path, old, old);
-    expect(acquireDreamMarker()).toBe(true); // takeover
+    expect(acquireDreamMarker(sourceA)).toBe(true); // takeover
     expect(existsSync(path)).toBe(true);
   });
 });

@@ -136,8 +136,12 @@ export type CallGraphPassAction = "ready" | "continue" | "stalled" | "not_built"
  * lib/gbrain-local-status.ts. Avoids the ESM static-import hoist trap where a
  * module-load-time const captures the real ~/.gstack before a test can redirect.
  */
-export function dreamMarkerPath(): string {
-  return join(process.env.GSTACK_HOME || join(homedir(), ".gstack"), ".dream-in-progress");
+export function dreamMarkerPath(sourceId: string): string {
+  const sourceKey = createHash("sha256").update(sourceId).digest("hex").slice(0, 16);
+  return join(
+    process.env.GSTACK_HOME || join(homedir(), ".gstack"),
+    `.call-graph-backfill-${sourceKey}.lock`,
+  );
 }
 
 // Default 35-minute timeout for code-walk + memory-ingest stages. Override via
@@ -717,14 +721,15 @@ function releaseLock(): void {
 }
 
 /**
- * Acquire the dream marker (`~/.gstack/.dream-in-progress`). Returns false when
- * a FRESH marker already exists (another worktree is mid-dream) — the caller
- * then SKIPs rather than launching a duplicate ~35-min global job. A stale
+ * Acquire this source's call-graph marker. Returns false when a FRESH marker
+ * already exists (another worktree is backfilling the same source) — the caller
+ * then SKIPs rather than launching duplicate work. Different sources never
+ * block one another. A stale
  * marker (older than DREAM_MARKER_STALE_MS, i.e. a crashed run) is taken over.
  * Mirrors acquireLock but with the dream TTL and its own path.
  */
-export function acquireDreamMarker(): boolean {
-  const path = dreamMarkerPath();
+export function acquireDreamMarker(sourceId: string): boolean {
+  const path = dreamMarkerPath(sourceId);
   mkdirSync(dirname(path), { recursive: true });
   if (existsSync(path)) {
     try {
@@ -747,9 +752,9 @@ export function acquireDreamMarker(): boolean {
   }
 }
 
-export function releaseDreamMarker(): void {
+export function releaseDreamMarker(sourceId: string): void {
   try {
-    const path = dreamMarkerPath();
+    const path = dreamMarkerPath(sourceId);
     if (!existsSync(path)) return;
     const info = JSON.parse(readFileSync(path, "utf-8")) as LockInfo;
     if (info.pid === process.pid) unlinkSync(path);
@@ -759,9 +764,9 @@ export function releaseDreamMarker(): void {
 }
 
 /** Read the pid recorded in a fresh dream marker, for the "already running" message. */
-function dreamMarkerPid(): number | null {
+function dreamMarkerPid(sourceId: string): number | null {
   try {
-    const info = JSON.parse(readFileSync(dreamMarkerPath(), "utf-8")) as LockInfo;
+    const info = JSON.parse(readFileSync(dreamMarkerPath(sourceId), "utf-8")) as LockInfo;
     return typeof info.pid === "number" ? info.pid : null;
   } catch {
     return null;
@@ -1470,6 +1475,33 @@ export async function runDream(args: CliArgs): Promise<StageResult> {
     };
   }
 
+  // Edge backfill mutates call-graph metadata, so it is subject to the same
+  // repository policy as code ingest. Enforce this inside the stage as well as
+  // at orchestration time so explicit --dream and unattended --full runs can
+  // never bypass a deny/read-only decision or an unreadable policy store.
+  const policyUrl = originUrl();
+  const tier = repoPolicyTier(policyUrl);
+  if (tier === "read-only") {
+    return {
+      name: "dream",
+      ran: false,
+      ok: true,
+      duration_ms: Date.now() - t0,
+      summary: `skipped — repo policy is read-only for ${policyUrl} (call-graph backfill writes metadata)`,
+    };
+  }
+  if (tier === "deny" || tier === "error") {
+    return {
+      name: "dream",
+      ran: true,
+      ok: false,
+      duration_ms: Date.now() - t0,
+      summary: tier === "deny"
+        ? `refused — repo policy is deny for ${policyUrl}; no GBrain interaction is allowed`
+        : "refused — repo policy store exists but could not be read; no GBrain interaction attempted",
+    };
+  }
+
   const gbrainEnv = buildGbrainEnv({ announce: !args.quiet });
   const localStatus = localEngineStatus({ noCache: false });
   if (localStatus === "timeout") {
@@ -1489,8 +1521,8 @@ export async function runDream(args: CliArgs): Promise<StageResult> {
   }
   const sourceId = resolveCodeSourceId(root, gbrainEnv);
 
-  if (!acquireDreamMarker()) {
-    const pid = dreamMarkerPid();
+  if (!acquireDreamMarker(sourceId)) {
+    const pid = dreamMarkerPid(sourceId);
     return {
       name: "dream",
       ran: false,
@@ -1585,20 +1617,31 @@ export async function runDream(args: CliArgs): Promise<StageResult> {
       edgesUnmatched += backfill.edges_unmatched;
 
       if (Date.now() >= deadline) break;
-      const readinessResult = spawnGbrain([
-        "code-callers",
-        CALL_GRAPH_READINESS_PROBE,
-        "--source",
-        sourceId,
-        "--limit",
-        "1",
-        "--json",
-      ], {
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: Math.max(1, deadline - Date.now()),
-        baseEnv: process.env,
-        announce: false,
-      });
+      let readinessResult: ReturnType<typeof spawnGbrain>;
+      try {
+        readinessResult = spawnGbrain([
+          "code-callers",
+          CALL_GRAPH_READINESS_PROBE,
+          "--source",
+          sourceId,
+          "--limit",
+          "1",
+          "--json",
+        ], {
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: Math.max(1, deadline - Date.now()),
+          baseEnv: process.env,
+          announce: false,
+        });
+      } catch (err) {
+        return {
+          name: "dream",
+          ran: true,
+          ok: false,
+          duration_ms: Date.now() - t0,
+          summary: `gbrain source readiness probe failed to start: ${(err as Error).message}`,
+        };
+      }
       if (readinessResult.error || readinessResult.status !== 0) {
         const err = readinessResult.error as NodeJS.ErrnoException | undefined;
         const why = err?.message ?? (readinessResult.status === null
@@ -1683,7 +1726,7 @@ export async function runDream(args: CliArgs): Promise<StageResult> {
       summary: `call-graph backfill timed out after ${passes} pass${passes === 1 ? "" : "es"}; progress is resumable`,
     };
   } finally {
-    releaseDreamMarker();
+    releaseDreamMarker(sourceId);
   }
 }
 

@@ -34,9 +34,11 @@ refreshed against this repo's current state, and refreshes the agent-side
 guidance in CLAUDE.md so the coding agent knows when to prefer `gbrain`
 search over Grep.
 
-**Architecture (post-codex review):** This skill uses gbrain v0.20.0+'s
-**native code surfaces** (`gbrain sources add`, `gbrain sync --strategy code`,
-`gbrain reindex-code`, `gbrain code-def/code-refs/code-callers/code-callees`).
+**Architecture (post-codex review):** This skill requires gbrain v0.42.14+.
+It uses the **native code surfaces** (`gbrain sources add`,
+`gbrain sync --strategy code`, `gbrain reindex-code`,
+`gbrain code-def/code-refs/code-callers/code-callees`) plus the public
+source-scoped call-graph readiness envelope added in that release.
 It does NOT use `gbrain import` (that path is for markdown directories).
 It does NOT touch `~/.gstack/` indexing (the existing `gstack-gbrain-source-wireup`
 owns that — never double-store).

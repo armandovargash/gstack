@@ -295,13 +295,16 @@ describe('gstack-gbrain-sync code stage honors the repo policy (#2140 sync path)
     git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'fixture');
   }
 
-  function runSync(): { status: number; text: string; stages: any[] } {
-    const res = spawnSync('bun', [SYNC, '--code-only', '--incremental'], {
+  function runSync(
+    args: string[] = ['--code-only', '--incremental'],
+    extraEnv: Record<string, string> = {},
+  ): { status: number; text: string; stages: any[] } {
+    const res = spawnSync('bun', [SYNC, ...args], {
       cwd: repoDir,
       encoding: 'utf-8',
       timeout: 60_000,
       // HOME also redirected so engine detection can't find a real ~/.gbrain.
-      env: { ...process.env, GSTACK_HOME: tmpHome, HOME: tmpHome },
+      env: { ...process.env, GSTACK_HOME: tmpHome, HOME: tmpHome, ...extraEnv },
     });
     let stages: any[] = [];
     try {
@@ -341,6 +344,40 @@ describe('gstack-gbrain-sync code stage honors the repo policy (#2140 sync path)
     expect(r.text).toContain('read-only');
     const code = r.stages.find((s: any) => s.name === 'code');
     expect(code?.detail?.status).toBe('skipped-policy-read-only');
+  });
+
+  test('deny/read-only also block explicit call-graph backfill before any GBrain command', () => {
+    makeRepo();
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-policy-fake-bin-'));
+    const commandLog = path.join(tmpHome, 'gbrain-commands.log');
+    fs.writeFileSync(
+      path.join(binDir, 'gbrain'),
+      '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$GSTACK_TEST_GBRAIN_LOG"\nexit 99\n',
+      { mode: 0o755 },
+    );
+    const dreamArgs = ['--dream', '--no-code', '--no-memory', '--no-brain-sync', '--quiet'];
+    const env = {
+      PATH: `${binDir}:${process.env.PATH || ''}`,
+      GSTACK_TEST_GBRAIN_LOG: commandLog,
+    };
+
+    try {
+      expect(run(['set', REPO_URL, 'deny']).status).toBe(0);
+      const denied = runSync(dreamArgs, env);
+      expect(denied.status).toBe(1);
+      expect(denied.stages.find((s: any) => s.name === 'dream')?.summary)
+        .toContain('no GBrain interaction is allowed');
+      expect(fs.existsSync(commandLog)).toBe(false);
+
+      expect(run(['set', REPO_URL, 'read-only']).status).toBe(0);
+      const readOnly = runSync(dreamArgs, env);
+      expect(readOnly.status).toBe(0);
+      expect(readOnly.stages.find((s: any) => s.name === 'dream')?.summary)
+        .toContain('call-graph backfill writes metadata');
+      expect(fs.existsSync(commandLog)).toBe(false);
+    } finally {
+      fs.rmSync(binDir, { recursive: true, force: true });
+    }
   });
 
   test('store exists but unreadable → fail-closed refusal, never bypassed', () => {
