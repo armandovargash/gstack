@@ -21,6 +21,7 @@ import {
 } from "../bin/gstack-gbrain-sync";
 
 const SCRIPT = join(import.meta.dir, "..", "bin", "gstack-gbrain-sync.ts");
+const GSTACK_PATHS = join(import.meta.dir, "..", "bin", "gstack-paths");
 
 function makeTestHome(): string {
   return mkdtempSync(join(tmpdir(), "gstack-gbrain-sync-"));
@@ -588,6 +589,36 @@ esac
     expect(Array.isArray(state.last_stages)).toBe(true);
     // With all stages disabled, last_stages is empty
     expect(state.last_stages.length).toBe(0);
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it("writes to the same portable plugin state root consumed by post-sync readers", () => {
+    const home = makeTestHome();
+    const pluginData = join(home, "plugin-data");
+    const env = {
+      ...process.env,
+      HOME: home,
+      CLAUDE_PLUGIN_DATA: pluginData,
+      CLAUDE_PLUGIN_ROOT: join(home, "gstack-plugin"),
+    };
+    delete env.GSTACK_HOME;
+    delete env.GSTACK_STATE_ROOT;
+
+    const r = spawnSync(
+      "bash",
+      [
+        "-c",
+        'eval "$(bash "$1")"; GSTACK_STATE_ROOT="$GSTACK_STATE_ROOT" bun "$2" --incremental --no-code --no-memory --no-brain-sync --quiet',
+        "gstack-sync-test",
+        GSTACK_PATHS,
+        SCRIPT,
+      ],
+      { encoding: "utf-8", timeout: 60000, env },
+    );
+
+    expect(r.status).toBe(0);
+    expect(existsSync(join(pluginData, ".gbrain-sync-state.json"))).toBe(true);
+    expect(existsSync(join(home, ".gstack", ".gbrain-sync-state.json"))).toBe(false);
     rmSync(home, { recursive: true, force: true });
   });
 

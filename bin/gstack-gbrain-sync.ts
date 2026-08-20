@@ -101,7 +101,10 @@ interface StageResult {
 // ── Constants ──────────────────────────────────────────────────────────────
 
 const HOME = homedir();
-const GSTACK_HOME = process.env.GSTACK_HOME || join(HOME, ".gstack");
+// Skills resolve the portable root through bin/gstack-paths and pass its
+// GSTACK_STATE_ROOT output to this writer. Keep GSTACK_HOME as the legacy
+// fallback for direct callers and existing tests.
+const GSTACK_HOME = process.env.GSTACK_STATE_ROOT || process.env.GSTACK_HOME || join(HOME, ".gstack");
 const STATE_PATH = join(GSTACK_HOME, ".gbrain-sync-state.json");
 const LOCK_PATH = join(GSTACK_HOME, ".sync-gbrain.lock");
 const STALE_LOCK_MS = 5 * 60 * 1000;
@@ -151,7 +154,7 @@ export function isGbrainCallGraphVersionSupported(raw: string): boolean {
 
 /**
  * Marker path computed fresh per call (not a module const) so tests can mutate
- * GSTACK_HOME at runtime — same pattern as cacheFilePath() in
+ * GSTACK_STATE_ROOT / GSTACK_HOME at runtime — same pattern as cacheFilePath() in
  * lib/gbrain-local-status.ts. Avoids the ESM static-import hoist trap where a
  * module-load-time const captures the real ~/.gstack before a test can redirect.
  */
@@ -164,7 +167,7 @@ export function dreamMarkerPath(sourceId: string): string {
     ? `.call-graph-backfill-${createHash("sha256").update(sourceId).digest("hex").slice(0, 16)}.lock`
     : ".call-graph-backfill.lock";
   return join(
-    process.env.GSTACK_HOME || join(homedir(), ".gstack"),
+    process.env.GSTACK_STATE_ROOT || process.env.GSTACK_HOME || join(homedir(), ".gstack"),
     markerName,
   );
 }

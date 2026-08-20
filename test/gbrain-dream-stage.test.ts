@@ -205,6 +205,16 @@ describe("CLI gate wiring (dry-run subprocess — never spawns a real dream)", (
 });
 
 describe("skill readiness source custody", () => {
+  it("passes the portable state root from the skill to the orchestrator writer", () => {
+    const template = readFileSync(join(import.meta.dir, "..", "sync-gbrain", "SKILL.md.tmpl"), "utf-8");
+    const runStep = template.slice(
+      template.indexOf("## Step 2: Run the orchestrator"),
+      template.indexOf("## Step 3: Code-index health check"),
+    );
+    expect(runStep).toContain('eval "$(~/.claude/skills/gstack/bin/gstack-paths)"');
+    expect(runStep).toContain('GSTACK_STATE_ROOT="$GSTACK_STATE_ROOT"');
+  });
+
   it("resolves code-index state through the portable root for this repository", () => {
     const template = readFileSync(join(import.meta.dir, "..", "sync-gbrain", "SKILL.md.tmpl"), "utf-8");
     const healthCheck = template.slice(
