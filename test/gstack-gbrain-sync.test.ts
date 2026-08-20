@@ -62,12 +62,12 @@ describe("gstack-gbrain-sync CLI", () => {
     expect(source).toContain("localEngineStatus");
   });
 
-  it("uses GBrain's config environment when resolving dream sources", () => {
+  it("uses GBrain's config environment when resolving call-graph sources", () => {
     const source = readFileSync(SCRIPT, "utf-8");
 
     expect(source).not.toContain("resolveCodeSourceId(root, process.env)");
     expect(source).toContain("resolveCodeSourceId(root, gbrainEnv)");
-    expect(source).toContain("cycleCompleted(resolveCodeSourceId(root, gbrainEnv), gbrainEnv)");
+    expect(source).toContain('spawnGbrain(["edges-backfill", "--source", sourceId, "--json"]');
   });
 
   it("--dry-run with --code-only reports the code import preview only", () => {
@@ -236,7 +236,7 @@ esac
     });
 
     expect(r.status).toBe(0);
-    expect(r.stdout).toContain("gbrain dream --source client-acme-app");
+    expect(r.stdout).toContain("gbrain edges-backfill --source client-acme-app --json");
     rmSync(repo, { recursive: true, force: true });
     rmSync(bindir, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
