@@ -1067,18 +1067,20 @@ signal. Probe it with a collision-resistant symbol so `count` stays zero and the
 command must consult graph readiness instead of short-circuiting on a match:
 
 ~~~bash
-# Read the exact source selected by this invocation. The dream stage persists
-# its path-validated source_id; code-stage detail is the fallback when dream
-# did not run. Never trust a raw .gbrain-source here: it may be stale, copied
-# from another checkout, or missed when the skill starts in a subdirectory.
-SOURCE_ID=$(jq -r '
+# Read only a path-validated result for THIS repository. Sibling worktrees can
+# update the shared state after this invocation; source_path custody makes that
+# race fail closed instead of certifying another checkout's graph. Never trust
+# a raw .gbrain-source here: it may be stale or copied from another checkout.
+_GSTACK_STATE_ROOT="${GSTACK_HOME:-$HOME/.gstack}"
+_REPO_TOP=$(git rev-parse --show-toplevel 2>/dev/null || true)
+SOURCE_ID=$(jq -r --arg path "$_REPO_TOP" '
   [
-    (.last_stages[]? | select(.name=="dream") | .detail.source_id),
-    (.last_stages[]? | select(.name=="code") | .detail.source_id)
+    (.last_stages[]? | select(.name=="dream" and .detail.source_path==$path) | .detail.source_id),
+    (.last_stages[]? | select(.name=="code" and .detail.source_path==$path) | .detail.source_id)
   ]
   | map(select(type=="string" and length>0))
   | first // empty
-' ~/.gstack/.gbrain-sync-state.json 2>/dev/null)
+' "$_GSTACK_STATE_ROOT/.gbrain-sync-state.json" 2>/dev/null)
 GRAPH_JSON=$(gbrain code-callers "__gstack_call_graph_readiness_5f3c9d__" \
   --source "$SOURCE_ID" --limit 1 --json 2>/dev/null || true)
 GRAPH_STATUS=$(printf '%s' "$GRAPH_JSON" | jq -r --arg id "$SOURCE_ID" '

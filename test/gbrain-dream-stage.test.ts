@@ -211,8 +211,10 @@ describe("skill readiness source custody", () => {
       template.indexOf("## Step 3.5: Call-graph health check"),
       template.indexOf("## Step 4: Refresh"),
     );
-    expect(healthCheck).toContain('select(.name=="dream")');
-    expect(healthCheck).toContain('select(.name=="code")');
+    expect(healthCheck).toContain('.name=="dream" and .detail.source_path==$path');
+    expect(healthCheck).toContain('.name=="code" and .detail.source_path==$path');
+    expect(healthCheck).toContain('.detail.source_path==$path');
+    expect(healthCheck).toContain('${GSTACK_HOME:-$HOME/.gstack}');
     expect(healthCheck).not.toContain("cat .gbrain-source");
   });
 });
