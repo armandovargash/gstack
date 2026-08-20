@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect, afterEach } from "bun:test";
-import { mkdtempSync, existsSync, writeFileSync, utimesSync, rmSync } from "fs";
+import { mkdtempSync, mkdirSync, existsSync, writeFileSync, utimesSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { spawnSync } from "child_process";
@@ -117,6 +117,7 @@ describe("runDream — dry-run preview", () => {
 
 describe("dream marker — concurrency guard", () => {
   const saved = process.env.GSTACK_HOME;
+  const savedHome = process.env.HOME;
   const sourceA = "gstack-code-acme-a-11111111";
   const sourceB = "gstack-code-acme-b-22222222";
   let tmp: string;
@@ -125,11 +126,14 @@ describe("dream marker — concurrency guard", () => {
     if (tmp) rmSync(tmp, { recursive: true, force: true });
     if (saved === undefined) delete process.env.GSTACK_HOME;
     else process.env.GSTACK_HOME = saved;
+    if (savedHome === undefined) delete process.env.HOME;
+    else process.env.HOME = savedHome;
   });
 
   function redirectHome(): void {
     tmp = mkdtempSync(join(tmpdir(), "gbrain-dream-marker-"));
     process.env.GSTACK_HOME = tmp;
+    process.env.HOME = tmp;
   }
 
   it("acquire creates the marker; a second acquire on a fresh marker fails", () => {
@@ -140,8 +144,19 @@ describe("dream marker — concurrency guard", () => {
     expect(acquireDreamMarker(sourceA)).toBe(false);
   });
 
-  it("does not suppress a concurrent backfill for a different source", () => {
+  it("serializes different sources on one PGLite engine", () => {
     redirectHome();
+    mkdirSync(join(tmp, ".gbrain"), { recursive: true });
+    writeFileSync(join(tmp, ".gbrain", "config.json"), JSON.stringify({ engine: "pglite" }));
+    expect(acquireDreamMarker(sourceA)).toBe(true);
+    expect(acquireDreamMarker(sourceB)).toBe(false);
+    expect(dreamMarkerPath(sourceA)).toBe(dreamMarkerPath(sourceB));
+  });
+
+  it("allows different sources to backfill concurrently on Postgres", () => {
+    redirectHome();
+    mkdirSync(join(tmp, ".gbrain"), { recursive: true });
+    writeFileSync(join(tmp, ".gbrain", "config.json"), JSON.stringify({ engine: "postgres" }));
     expect(acquireDreamMarker(sourceA)).toBe(true);
     expect(acquireDreamMarker(sourceB)).toBe(true);
     expect(dreamMarkerPath(sourceA)).not.toBe(dreamMarkerPath(sourceB));

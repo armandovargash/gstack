@@ -121,6 +121,24 @@ describe('set + get', () => {
     expect(run(['get', 'https://github.com/c/c']).stdout).toBe('deny');
   });
 
+  test('peek interprets a legacy allow tier without migrating the store', () => {
+    const legacy = JSON.stringify({ 'github.com/foo/bar': 'allow' });
+    fs.writeFileSync(policyFile(), legacy);
+    const r = run(['peek', 'https://github.com/foo/bar.git']);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toBe('read-write');
+    expect(fs.readFileSync(policyFile(), 'utf-8')).toBe(legacy);
+  });
+
+  test('peek fails closed on corrupt JSON without quarantine or replacement', () => {
+    const corrupt = '{broken';
+    fs.writeFileSync(policyFile(), corrupt);
+    const r = run(['peek', 'https://github.com/foo/bar.git']);
+    expect(r.status).toBe(2);
+    expect(fs.readFileSync(policyFile(), 'utf-8')).toBe(corrupt);
+    expect(fs.readdirSync(tmpHome).filter((name) => name.includes('.corrupt-'))).toEqual([]);
+  });
+
   test('invalid tier rejected with non-zero exit', () => {
     const r = run(['set', 'https://github.com/foo/bar', 'allow']);
     expect(r.status).not.toBe(0);
@@ -392,6 +410,19 @@ describe('gstack-gbrain-sync code stage honors the repo policy (#2140 sync path)
     } finally {
       fs.rmSync(binDir, { recursive: true, force: true });
     }
+  });
+
+  test('dream dry-run reads legacy policy without migrating it', () => {
+    makeRepo();
+    const legacy = JSON.stringify({ 'github.com/acme/widget': 'deny' });
+    fs.writeFileSync(policyFile(), legacy);
+    const r = runSync([
+      '--dry-run', '--dream', '--no-code', '--no-memory', '--no-brain-sync', '--quiet',
+    ]);
+    // Preview reports the refusal but remains a successful no-write preview.
+    expect(r.status).toBe(0);
+    expect(r.text).toContain('no GBrain interaction is allowed');
+    expect(fs.readFileSync(policyFile(), 'utf-8')).toBe(legacy);
   });
 
   test('store exists but unreadable → fail-closed refusal, never bypassed', () => {

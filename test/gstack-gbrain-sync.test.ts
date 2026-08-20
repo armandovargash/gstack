@@ -249,12 +249,18 @@ esac
     const repo = mkdtempSync(join(tmpdir(), "gstack-old-gbrain-repo-"));
     const commandLog = join(home, "gbrain-commands.log");
     mkdirSync(gstackHome, { recursive: true });
+    mkdirSync(join(home, ".gbrain"), { recursive: true });
+    writeFileSync(
+      join(home, ".gbrain", "config.json"),
+      JSON.stringify({ engine: "pglite", database_url: "pglite:///fake" }),
+    );
     spawnSync("git", ["init", "--quiet", "-b", "main"], { cwd: repo });
     spawnSync("git", ["remote", "add", "origin", "https://github.com/acme/old-gbrain.git"], { cwd: repo });
     writeFileSync(join(bindir, "gbrain"), `#!/bin/sh
 printf '%s\n' "$*" >> "$GSTACK_TEST_GBRAIN_LOG"
 case "$*" in
   --version) echo 'gbrain 0.42.13.9'; exit 0 ;;
+  'sources list --json') echo '{"sources":[]}'; exit 0 ;;
   *) exit 99 ;;
 esac
 `);
@@ -284,7 +290,10 @@ esac
     expect(r.stderr).toContain("Run /setup-gbrain to upgrade before syncing");
     const commands = readFileSync(commandLog, "utf-8").trim().split("\n");
     expect(commands.length).toBeGreaterThan(0);
-    expect(commands.every((command) => command === "--version")).toBe(true);
+    expect(commands.every((command) =>
+      command === "--version" || command === "sources list --json"
+    )).toBe(true);
+    expect(commands.some((command) => command.startsWith("edges-backfill"))).toBe(false);
     rmSync(repo, { recursive: true, force: true });
     rmSync(bindir, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });

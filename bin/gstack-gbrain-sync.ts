@@ -40,9 +40,12 @@ import { detectEngineTier, withErrorContext, canonicalizeRemote } from "../lib/g
 import { ensureSourceRegistered, sourcePageCount, parseSourcesList, type CycleStatus } from "../lib/gbrain-sources";
 import { detectAutopilot, decideSourceRemove, decideCodeSync } from "../lib/gbrain-guards";
 import { writeReceipt } from "../lib/egress-receipt";
-import { localEngineStatus, readGbrainVersion, type LocalEngineStatus } from "../lib/gbrain-local-status";
+import { configuredEngine, localEngineStatus, readGbrainVersion, type LocalEngineStatus } from "../lib/gbrain-local-status";
 import { buildGbrainEnv, spawnGbrain, execGbrainJson, NEEDS_SHELL_ON_WINDOWS, bashScriptInvocation } from "../lib/gbrain-exec";
-import { repoPolicyTier as sharedRepoPolicyTier } from "../lib/gbrain-repo-policy-client";
+import {
+  repoPolicyTier as sharedRepoPolicyTier,
+  repoPolicyTierReadOnly as sharedRepoPolicyTierReadOnly,
+} from "../lib/gbrain-repo-policy-client";
 import { checkOwnedStagingDir } from "../lib/staging-guard";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -104,8 +107,8 @@ const LOCK_PATH = join(GSTACK_HOME, ".sync-gbrain.lock");
 const STALE_LOCK_MS = 5 * 60 * 1000;
 
 // The legacy --dream flag runs GBrain's official source-scoped, resumable
-// edges-backfill operation. It remains LOCK-FREE after the sync lock releases,
-// so a dedicated marker prevents sibling worktrees from duplicating the work.
+// edges-backfill operation. It runs after the main sync lock releases, with a
+// dedicated engine/source-aware marker preventing unsafe duplicate work.
 const DEFAULT_DREAM_TIMEOUT_MS = 45 * 60 * 1000;
 const DREAM_MARKER_STALE_MS = DEFAULT_DREAM_TIMEOUT_MS;
 const CALL_GRAPH_READINESS_PROBE = "__gstack_call_graph_readiness_5f3c9d__";
@@ -153,10 +156,16 @@ export function isGbrainCallGraphVersionSupported(raw: string): boolean {
  * module-load-time const captures the real ~/.gstack before a test can redirect.
  */
 export function dreamMarkerPath(sourceId: string): string {
-  const sourceKey = createHash("sha256").update(sourceId).digest("hex").slice(0, 16);
+  // PGLite is single-process, so every source sharing that engine must use one
+  // marker. Unknown configs take the same conservative path. Postgres-backed
+  // engines can safely backfill independent sources in parallel.
+  const engine = configuredEngine(process.env);
+  const markerName = engine === "postgres"
+    ? `.call-graph-backfill-${createHash("sha256").update(sourceId).digest("hex").slice(0, 16)}.lock`
+    : ".call-graph-backfill.lock";
   return join(
     process.env.GSTACK_HOME || join(homedir(), ".gstack"),
-    `.call-graph-backfill-${sourceKey}.lock`,
+    markerName,
   );
 }
 
@@ -737,10 +746,9 @@ function releaseLock(): void {
 }
 
 /**
- * Acquire this source's call-graph marker. Returns false when a FRESH marker
- * already exists (another worktree is backfilling the same source) — the caller
- * then SKIPs rather than launching duplicate work. Different sources never
- * block one another. A stale
+ * Acquire the call-graph marker. PGLite uses one engine-wide marker because it
+ * is single-process; Postgres uses source-scoped markers so independent sources
+ * can proceed concurrently. A stale
  * marker (older than DREAM_MARKER_STALE_MS, i.e. a crashed run) is taken over.
  * Mirrors acquireLock but with the dream TTL and its own path.
  */
@@ -876,8 +884,13 @@ function warnProbeTimeout(stage: "code" | "memory" | "dream"): void {
  * win32 gets the invoke-via-bash path). A spawn failure is still fail-closed
  * but says so, instead of the misleading "store could not be read".
  */
-export function repoPolicyTier(url: string | null): "read-write" | "read-only" | "deny" | "unset" | "error" {
-  const res = sharedRepoPolicyTier(url, process.env);
+export function repoPolicyTier(
+  url: string | null,
+  readOnly: boolean = false,
+): "read-write" | "read-only" | "deny" | "unset" | "error" {
+  const res = readOnly
+    ? sharedRepoPolicyTierReadOnly(url, process.env)
+    : sharedRepoPolicyTier(url, process.env);
   if (res.error === "spawn-failed") {
     process.stderr.write(
       "[gstack-gbrain-sync] the repo-policy helper could not be spawned (bash missing from PATH?) — " +
@@ -907,7 +920,7 @@ async function runCodeImport(args: CliArgs): Promise<StageResult> {
   // Per-repo trust tier — checked BEFORE the dry-run branch so previews report
   // the refusal honestly instead of claiming they would sync.
   const policyUrl = originUrl();
-  const tier = repoPolicyTier(policyUrl);
+  const tier = repoPolicyTier(policyUrl, args.mode === "dry-run");
   if (tier === "read-only") {
     // Honoring an explicit user setting (search allowed, page writes never) is
     // a clean skip, not a stage failure — code ingest writes pages.
@@ -1484,7 +1497,7 @@ export async function runDream(args: CliArgs): Promise<StageResult> {
   // dry-run branch: previews must report the same refusal/skip as real runs,
   // while still avoiding every GBrain command.
   const policyUrl = originUrl();
-  const tier = repoPolicyTier(policyUrl);
+  const tier = repoPolicyTier(policyUrl, args.mode === "dry-run");
   if (tier === "read-only") {
     return {
       name: "dream",
@@ -1837,16 +1850,23 @@ async function main(): Promise<void> {
   if (args.mode !== "dry-run" && shouldRunDream(args, null)) {
     const tier = repoPolicyTier(originUrl());
     if (tier === "read-write" || tier === "unset") {
-      const gbrainVersion = readGbrainVersion(process.env);
-      if (!isGbrainCallGraphVersionSupported(gbrainVersion)) {
-        const detail = gbrainVersion
-          ? `found ${gbrainVersion}`
-          : "version could not be determined";
-        console.error(
-          `[gbrain-sync] call-graph backfill requires gbrain >= ${MIN_GBRAIN_CALL_GRAPH_VERSION} (${detail}). ` +
-          "Run /setup-gbrain to upgrade before syncing.",
-        );
-        process.exit(1);
+      const localStatus = localEngineStatus({ noCache: false });
+      // Thin clients have no local graph engine by design. Other unhealthy
+      // local states keep their existing stage-level skip/remediation path.
+      if (localStatus !== "ok" && localStatus !== "timeout") {
+        // No local call-graph compatibility requirement to enforce here.
+      } else {
+        const gbrainVersion = readGbrainVersion(process.env);
+        if (!isGbrainCallGraphVersionSupported(gbrainVersion)) {
+          const detail = gbrainVersion
+            ? `found ${gbrainVersion}`
+            : "version could not be determined";
+          console.error(
+            `[gbrain-sync] call-graph backfill requires gbrain >= ${MIN_GBRAIN_CALL_GRAPH_VERSION} (${detail}). ` +
+            "Run /setup-gbrain to upgrade before syncing.",
+          );
+          process.exit(1);
+        }
       }
     }
   }
@@ -1906,7 +1926,7 @@ async function main(): Promise<void> {
     cleanup();
   }
 
-  // ── Call-graph backfill — LOCK-FREE, after the sync lock releases ───────────
+  // ── Call-graph backfill — separately guarded after the sync lock releases ──
   let dreamStage: StageResult | null = null;
   if (args.mode === "dry-run") {
     // Preview only; never probes doctor or spawns. `--dry-run` and `--full` are
