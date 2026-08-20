@@ -76,6 +76,7 @@ describe("gstack-gbrain-sync CLI", () => {
 
     expect(source).toContain('const LEGACY_GSTACK_HOME = process.env.GSTACK_HOME || join(HOME, ".gstack")');
     expect(source).toContain("const GSTACK_STATE_ROOT = process.env.GSTACK_STATE_ROOT || LEGACY_GSTACK_HOME");
+    expect(source).toContain('const LOCK_PATH = join(LEGACY_GSTACK_HOME, ".sync-gbrain.lock")');
     expect(source).toContain("decideResume(gstackHome: string = LEGACY_GSTACK_HOME)");
     expect(source).not.toContain("childEnv.GSTACK_HOME =");
     expect(source).not.toContain("const childEnv = { ...process.env, GSTACK_HOME }");

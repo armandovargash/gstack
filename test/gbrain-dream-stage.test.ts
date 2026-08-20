@@ -117,6 +117,7 @@ describe("runDream — dry-run preview", () => {
 
 describe("dream marker — concurrency guard", () => {
   const saved = process.env.GSTACK_HOME;
+  const savedStateRoot = process.env.GSTACK_STATE_ROOT;
   const savedHome = process.env.HOME;
   const sourceA = "gstack-code-acme-a-11111111";
   const sourceB = "gstack-code-acme-b-22222222";
@@ -126,6 +127,8 @@ describe("dream marker — concurrency guard", () => {
     if (tmp) rmSync(tmp, { recursive: true, force: true });
     if (saved === undefined) delete process.env.GSTACK_HOME;
     else process.env.GSTACK_HOME = saved;
+    if (savedStateRoot === undefined) delete process.env.GSTACK_STATE_ROOT;
+    else process.env.GSTACK_STATE_ROOT = savedStateRoot;
     if (savedHome === undefined) delete process.env.HOME;
     else process.env.HOME = savedHome;
   });
@@ -133,6 +136,7 @@ describe("dream marker — concurrency guard", () => {
   function redirectHome(): void {
     tmp = mkdtempSync(join(tmpdir(), "gbrain-dream-marker-"));
     process.env.GSTACK_HOME = tmp;
+    process.env.GSTACK_STATE_ROOT = join(tmp, "portable-metadata");
     process.env.HOME = tmp;
   }
 
@@ -140,6 +144,8 @@ describe("dream marker — concurrency guard", () => {
     redirectHome();
     expect(acquireDreamMarker(sourceA)).toBe(true);
     expect(existsSync(dreamMarkerPath(sourceA))).toBe(true);
+    expect(dreamMarkerPath(sourceA).startsWith(process.env.GSTACK_HOME!)).toBe(true);
+    expect(dreamMarkerPath(sourceA).startsWith(process.env.GSTACK_STATE_ROOT!)).toBe(false);
     // Fresh marker present → a concurrent worktree must NOT launch a duplicate.
     expect(acquireDreamMarker(sourceA)).toBe(false);
   });
