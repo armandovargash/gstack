@@ -94,6 +94,23 @@ CACHE_FILE="$STATE_ROOT/${SOURCE_ID}-${FINGERPRINT}.partial"
 # Readiness evidence is fingerprint-specific, but repair budget is source-wide:
 # the resolver phase is brain-global and must not relaunch after every edit.
 ATTEMPT_FILE="$STATE_ROOT/${SOURCE_ID}.attempted-at"
+# Upgrade compatibility: preserve the newest cooldown receipt written by the
+# earlier fingerprint-scoped implementation, so installing this fix cannot
+# immediately repeat a resolver that just finished.
+if [ ! -f "$ATTEMPT_FILE" ]; then
+	LATEST_LEGACY_ATTEMPT=""
+	for LEGACY_ATTEMPT_FILE in "$STATE_ROOT/${SOURCE_ID}-"*.attempted-at; do
+		[ -f "$LEGACY_ATTEMPT_FILE" ] || continue
+		LEGACY_ATTEMPT=$(cat "$LEGACY_ATTEMPT_FILE" 2>/dev/null)
+		case "$LEGACY_ATTEMPT" in
+		  ''|*[!0-9]*) continue ;;
+		esac
+		if [ -z "$LATEST_LEGACY_ATTEMPT" ] || [ "$LEGACY_ATTEMPT" -gt "$LATEST_LEGACY_ATTEMPT" ]; then
+			LATEST_LEGACY_ATTEMPT="$LEGACY_ATTEMPT"
+		fi
+	done
+	[ -z "$LATEST_LEGACY_ATTEMPT" ] || printf '%s\n' "$LATEST_LEGACY_ATTEMPT" > "$ATTEMPT_FILE"
+fi
 CACHE_HIT=false
 CANARY=""
 if [ -f "$CACHE_FILE" ]; then

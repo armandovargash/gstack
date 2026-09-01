@@ -25,6 +25,8 @@ describe("GBrain readiness bootstrap contract", () => {
     expect(repairKey("candor-worktree", "fingerprint-a")).toBe(
       repairKey("candor-worktree", "fingerprint-b"),
     );
+    expect(readiness).toContain('for LEGACY_ATTEMPT_FILE in "$STATE_ROOT/${SOURCE_ID}-"*.attempted-at');
+    expect(readiness).toContain('> "$ATTEMPT_FILE"');
     expect(readiness).toContain('degraded "repair_cooldown"');
     expect(skillStart).toContain('*"reason=repair_cooldown"*)');
   });
