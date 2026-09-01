@@ -91,7 +91,9 @@ REPO_REAL=$(cd "$REPO_ROOT" 2>/dev/null && pwd -P)
 [ "$SOURCE_REAL" = "$REPO_REAL" ] || degraded "source_path_mismatch"
 
 CACHE_FILE="$STATE_ROOT/${SOURCE_ID}-${FINGERPRINT}.partial"
-ATTEMPT_FILE="$STATE_ROOT/${SOURCE_ID}-${FINGERPRINT}.attempted-at"
+# Readiness evidence is fingerprint-specific, but repair budget is source-wide:
+# the resolver phase is brain-global and must not relaunch after every edit.
+ATTEMPT_FILE="$STATE_ROOT/${SOURCE_ID}.attempted-at"
 CACHE_HIT=false
 CANARY=""
 if [ -f "$CACHE_FILE" ]; then
@@ -144,8 +146,9 @@ fi
 rm -f "$CACHE_FILE" 2>/dev/null
 
 # A partial upstream graph must not turn every skill invocation into another
-# multi-minute global resolver cycle. One repair attempt per exact fingerprint
-# every 30 minutes is enough; repository lookup remains the safe fallback.
+# multi-minute global resolver cycle. One repair attempt per source every 30
+# minutes is enough even as HEAD/diffs change; repository lookup remains the
+# safe fallback.
 NOW_EPOCH=$(date +%s)
 LAST_ATTEMPT=$(cat "$ATTEMPT_FILE" 2>/dev/null)
 case "$LAST_ATTEMPT" in

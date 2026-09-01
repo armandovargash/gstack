@@ -14,9 +14,17 @@ describe("GBrain readiness bootstrap contract", () => {
     expect(skillStart).toContain('"$_GBRAIN_READY_BIN" >/dev/null 2>&1');
   });
 
-  test("a partial graph cannot trigger an expensive repair on every skill", () => {
+  test("two changing fingerprints share one source-wide repair cooldown", () => {
     expect(readiness).toContain("REPAIR_COOLDOWN_SECONDS=1800");
-    expect(readiness).toContain("attempted-at");
+    const attemptAssignment = readiness.match(/^ATTEMPT_FILE=(.*)$/m)?.[1] ?? "";
+    expect(attemptAssignment).toContain("${SOURCE_ID}.attempted-at");
+    expect(attemptAssignment).not.toContain("FINGERPRINT");
+
+    const repairKey = (sourceId: string, _fingerprint: string) =>
+      `${sourceId}.attempted-at`;
+    expect(repairKey("candor-worktree", "fingerprint-a")).toBe(
+      repairKey("candor-worktree", "fingerprint-b"),
+    );
     expect(readiness).toContain('degraded "repair_cooldown"');
     expect(skillStart).toContain('*"reason=repair_cooldown"*)');
   });
