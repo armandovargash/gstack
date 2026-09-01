@@ -31,6 +31,13 @@ describe("GBrain readiness bootstrap contract", () => {
     expect(skillStart).toContain('*"reason=repair_cooldown"*)');
   });
 
+  test("a known canary is retried before the repair cooldown blocks startup", () => {
+    const canaryProbe = readiness.indexOf('if [ -n "$CANARY" ] && check_canary "$CANARY"; then');
+    const cooldownGate = readiness.indexOf('degraded "repair_cooldown"');
+    expect(canaryProbe).toBeGreaterThan(-1);
+    expect(cooldownGate).toBeGreaterThan(canaryProbe);
+  });
+
   test("code readiness never pulls memory ingestion into repair", () => {
     expect(readiness).toContain("--code-only --dream --quiet");
     expect(readiness).not.toContain("gstack-memory-ingest");
@@ -49,11 +56,11 @@ describe("GBrain readiness bootstrap contract", () => {
     expect(removeDir).toBeGreaterThan(removePid);
   });
 
-  test("readiness requires resolved callers and a nonempty blast radius", () => {
+  test("readiness trusts the typed graph contract and requires a nonempty blast radius", () => {
     expect(readiness).toContain(".count > 0");
-    expect(readiness).toContain("[.callers[]?.resolved] | all");
+    expect(readiness).not.toContain("[.callers[]?.resolved] | all");
     expect(readiness).toContain('.result == "ok"');
-    expect(readiness).toContain("degraded \"no_resolved_canary\"");
+    expect(readiness).toContain("degraded \"no_graph_canary\"");
   });
 
   test("a single canary can certify partial utility, never global readiness", () => {

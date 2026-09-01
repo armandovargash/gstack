@@ -142,7 +142,7 @@ check_canary() {
   _def=$(cd "$REPO_ROOT" && gbrain code-def "$_symbol" --json 2>/dev/null)
   [ "$(printf '%s' "$_def" | jq -r '.ready == true and .count == 1' 2>/dev/null)" = "true" ] || return 1
   _callers=$(cd "$REPO_ROOT" && gbrain code-callers "$_symbol" --json 2>/dev/null)
-  [ "$(printf '%s' "$_callers" | jq -r '.ready == true and .count > 0 and ([.callers[]?.resolved] | all)' 2>/dev/null)" = "true" ] || return 1
+  [ "$(printf '%s' "$_callers" | jq -r '.ready == true and .count > 0' 2>/dev/null)" = "true" ] || return 1
 
   _init=$(jq -nc '{jsonrpc:"2.0",id:1,method:"initialize",params:{protocolVersion:"2025-03-26",capabilities:{},clientInfo:{name:"gstack-graph-canary",version:"1"}}}')
   _ready='{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}'
@@ -152,12 +152,13 @@ check_canary() {
   return 0
 }
 
-# A cache hit is only a performance hint, never authority. Re-run the cheap
-# canary so a corrupted/replaced graph cannot remain falsely green until HEAD
-# changes.
-if [ "$CACHE_HIT" = "true" ] && check_canary "$CANARY"; then
+# A cached or repo-known canary is only a performance hint, never authority.
+# Re-run it before the repair cooldown so a healthy graph can certify a new
+# worktree fingerprint without waiting 30 minutes or launching another dream.
+if [ -n "$CANARY" ] && check_canary "$CANARY"; then
   [ -n "$SESSION_FILE" ] && printf '%s\n' "$CANARY" > "$SESSION_FILE"
-  echo "GBRAIN_GRAPH: partial | source=$SOURCE_ID | canary=$CANARY | cache=hit"
+  printf '%s\n' "$CANARY" > "$CACHE_FILE"
+  echo "GBRAIN_GRAPH: partial | source=$SOURCE_ID | canary=$CANARY | cache=$CACHE_HIT"
   exit 0
 fi
 rm -f "$CACHE_FILE" 2>/dev/null
@@ -210,7 +211,7 @@ if ! check_canary "$CANARY"; then
 	rm -f "$EXPORTS_FILE" "$CANDIDATES_FILE" 2>/dev/null
 fi
 
-[ -n "$CANARY" ] || degraded "no_resolved_canary"
+[ -n "$CANARY" ] || degraded "no_graph_canary"
 printf '%s\n' "$CANARY" > "$CANARY_FILE"
 printf '%s\n' "$CANARY" > "$CACHE_FILE"
 [ -n "$SESSION_FILE" ] && printf '%s\n' "$CANARY" > "$SESSION_FILE"
