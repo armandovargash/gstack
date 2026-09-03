@@ -55,9 +55,20 @@ if [ -n "$UNPUSHED" ] || [ "$DIRTY" != "0" ]; then
   printf '\n'
 fi
 
-# The map exists so nobody reconstructs the architecture from fragments again.
+# The map exists so nobody reconstructs the architecture from fragments again,
+# and docs/operations holds the research that already answered most "is this
+# SOTA?" questions. On 2026-09-04 a session spent five hours rebuilding, from
+# arxiv, a conclusion the 2026-07-08 coverage-ontology memo had already reached
+# from the same sources. The work was not missing. Nobody looked.
+printf '### Read before diagnosing or researching\n\n'
 [ -f docs/operations/candor-factory-map.md ] && \
-  printf '### Read before diagnosing\n\n- docs/operations/candor-factory-map.md — thirteen stations, one page\n- AGENTS.md — the operating contract\n\n'
+  printf -- '- `docs/operations/candor-factory-map.md` — thirteen stations, one page\n'
+printf -- '- `AGENTS.md` — the operating contract\n'
+if [ -d docs/operations ]; then
+  N=$(ls docs/operations/*.md 2>/dev/null | wc -l | tr -d ' ')
+  printf -- '- `docs/operations/` — %s memos. Design and "is this SOTA" questions are usually answered here already; grep it before searching the web.\n' "$N"
+fi
+printf -- '- Open GitHub issues carry the decided design. `gh issue list --search "<topic>"` before concluding something is undecided.\n\n'
 
 # The brain answers these in seconds; grep and long file reads do not.
 printf '### Ask the running system, not a document\n\n'
